@@ -12,7 +12,7 @@
     .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; }
     .val { font-weight: 800; }
     .muted { color:#555; font-size: .92rem; margin-top: 6px; }
-    input { padding: 8px; border: 1px solid #bbb; border-radius: 10px; width: 140px; background:#fafafa; }
+    input { padding: 10px; border: 1px solid #bbb; border-radius: 10px; width: 170px; background:#fafafa; }
     button { padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; background: #f7f7f7; cursor: pointer; }
     button:active { transform: translateY(1px); }
     button:disabled { opacity:.55; cursor:not-allowed; }
@@ -23,67 +23,60 @@
     .btn-blue  { background: #dbeafe; border-color:#93c5fd; }
     .btn-gray  { background: #f3f4f6; border-color:#d1d5db; }
 
-    .hide { display:none !important; }
+    .hidden { display:none !important; }
 
     /* Login */
-    .login-wrap { max-width: 420px; margin: 10vh auto 0 auto; }
-    .login-card { padding: 18px; border: 2px solid #6b8e23; border-radius: 12px; background:#e6e6e6; }
-    .login-row { display:flex; flex-direction:column; gap:10px; margin-top: 12px; }
-    .login-row label { font-size: .95rem; color:#222; }
-    .login-row input { width: 100%; }
-    .login-actions { display:flex; gap:10px; margin-top: 14px; align-items:center; justify-content:flex-end; }
-    .login-err { color:#b00020; font-size:.95rem; margin-top:10px; min-height: 1.2em; }
+    .loginWrap { max-width: 420px; margin: 60px auto; }
+    .loginCard { padding: 18px; border: 2px solid #6b8e23; border-radius: 12px; background:#e6e6e6; }
+    .loginCard h2 { margin: 0 0 12px 0; }
+    .loginCard .row { justify-content:flex-start; gap:12px; }
+    .loginCard label { width: 110px; }
+    .loginErr { color:#b00020; font-weight:700; margin-top:10px; min-height: 22px; }
 
     @media (max-width: 900px){
       .top { grid-template-columns: 1fr; }
     }
   </style>
 </head>
-
 <body>
 
-<!-- ===== LOGIN ===== -->
-<div id="loginScreen" class="login-wrap">
-  <div class="login-card">
+<!-- LOGIN EKRANI -->
+<div id="loginView" class="loginWrap">
+  <div class="loginCard">
     <h2>🔒 Giriş</h2>
-    <div class="muted">Kullanıcı adı ve şifreyi girin.</div>
-
-    <div class="login-row">
-      <label>Kullanıcı adı</label>
-      <input id="u" autocomplete="username" />
-      <label>Şifre</label>
-      <input id="p" type="password" autocomplete="current-password" />
+    <div class="row"><label>Kullanıcı</label><input id="loginUser" autocomplete="username"></div>
+    <div class="row"><label>Şifre</label><input id="loginPass" type="password" autocomplete="current-password"></div>
+    <div class="btnrow" style="margin-top:12px;">
+      <button id="loginBtn" class="btn-green">Giriş Yap</button>
+      <button id="loginClearBtn">Temizle</button>
     </div>
-
-    <div class="login-actions">
-      <button id="loginBtn" class="btn-green">Giriş</button>
-    </div>
-
-    <div id="loginErr" class="login-err"></div>
+    <div class="muted">Not: Bu giriş ekranı şimdilik “kapı” amaçlıdır (client-side).</div>
+    <div id="loginErr" class="loginErr"></div>
   </div>
 </div>
 
-<!-- ===== PANEL ===== -->
-<div id="panelScreen" class="wrap hide">
+<!-- PANEL -->
+<div id="panelView" class="wrap hidden">
   <div class="top">
+
     <div class="card">
-      <div class="row" style="align-items:flex-start;">
+      <div class="btnrow" style="justify-content:space-between;">
         <h2 style="margin:0;">📡 Ölçümler</h2>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <button id="minmaxResetBtn" class="btn-gray">Min/Max Sıfırla</button>
-          <button id="logoutBtn" class="btn-red">Çıkış</button>
+        <div class="btnrow">
+          <button id="minmaxBtn">Min/Max Sıfırla</button>
+          <button id="logoutBtn">Çıkış</button>
         </div>
       </div>
 
       <div class="row"><div>Durum</div><div class="val" id="conn">Bağlanıyor…</div></div>
       <div class="row"><div>Sıcaklık</div><div class="val" id="t">--</div></div>
       <div class="row"><div>Nem</div><div class="val" id="h">--</div></div>
+
       <div class="row"><div>Min/Max (T)</div><div class="val" id="tmm">--</div></div>
       <div class="row"><div>Min/Max (H)</div><div class="val" id="hmm">--</div></div>
 
-      <!-- İstediğin: örnekleme zamanı değil NORMAL saat -->
       <div class="muted" id="clock">Saat: --</div>
-
+      <div class="muted" id="lastSample">Son okuma: --</div>
       <div class="muted" id="ntp">NTP: --</div>
       <div class="muted" id="err" style="color:#8a5a00;"></div>
     </div>
@@ -114,52 +107,45 @@
         Not: MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.
       </div>
     </div>
+
   </div>
 </div>
 
-<!-- mqtt.js -->
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
 <script>
-/* =========================
-   1) AYARLAR
-   ========================= */
-const LOGIN_USER = "admin";   // istediğin kullanıcı adı
-const LOGIN_PASS = "1234";    // istediğin şifre
-
-// Broker (EMQX public WSS)
+/* ===================== AYARLAR ===================== */
+// Broker (stabil)
 const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
-// HiveMQ public istersen:
-// const BROKER_WSS = "wss://broker.hivemq.com:8884/mqtt";
 
+// Topic + key
 const BASE_TOPIC = "omer/hvac/9f3a1c7b2d4e6f8a";
 const CMD_KEY    = "K!n@l1_2026_x9Qp7v";
+
+// “kapı” login (client-side)
+const LOGIN_USER = "omer";
+const LOGIN_PASS = "1234";
 
 const T_TELE  = `${BASE_TOPIC}/tele`;
 const T_STATE = `${BASE_TOPIC}/state`;
 const T_CMD   = `${BASE_TOPIC}/cmd`;
 const T_LWT   = `${BASE_TOPIC}/lwt`;
 
-/* =========================
-   2) DOM
-   ========================= */
-const loginScreen = document.getElementById("loginScreen");
-const panelScreen = document.getElementById("panelScreen");
-
-const elU = document.getElementById("u");
-const elP = document.getElementById("p");
-const elLoginBtn = document.getElementById("loginBtn");
-const elLoginErr = document.getElementById("loginErr");
-
-const elLogoutBtn = document.getElementById("logoutBtn");
-const elResetMM = document.getElementById("minmaxResetBtn");
+/* ===================== DOM ===================== */
+const loginView = document.getElementById("loginView");
+const panelView = document.getElementById("panelView");
+const loginUser = document.getElementById("loginUser");
+const loginPass = document.getElementById("loginPass");
+const loginBtn  = document.getElementById("loginBtn");
+const loginClearBtn = document.getElementById("loginClearBtn");
+const loginErr  = document.getElementById("loginErr");
 
 const elConn = document.getElementById("conn");
 const elT = document.getElementById("t");
 const elH = document.getElementById("h");
-const elTMM = document.getElementById("tmm");
-const elHMM = document.getElementById("hmm");
+const elTmm = document.getElementById("tmm");
+const elHmm = document.getElementById("hmm");
 const elClock = document.getElementById("clock");
+const elLastSample = document.getElementById("lastSample");
 const elNTP = document.getElementById("ntp");
 const elErr = document.getElementById("err");
 
@@ -171,54 +157,47 @@ const elSP = document.getElementById("sp");
 const elHys = document.getElementById("hys");
 const elLogicBtn = document.getElementById("logicBtn");
 const elSaveBtn = document.getElementById("saveBtn");
+
 const elModeBtn = document.getElementById("modeBtn");
 const elKombiBtn = document.getElementById("kombiBtn");
 const elKlimaBtn = document.getElementById("klimaBtn");
 
-/* =========================
-   3) PANEL STATE
-   ========================= */
+const logoutBtn = document.getElementById("logoutBtn");
+const minmaxBtn = document.getElementById("minmaxBtn");
+
+/* ===================== STATE ===================== */
 let state = {
   mode: null, logic: "AC",
   sp: 25.0, hys: 1.0,
   kombi: 0, klima: 0,
-  ntp_ok: 0
+  tz_off_s: 0, ntp_ok: 0, ts: 0,
+  tmin: null, tmax: null, hmin: null, hmax: null
 };
 
-let minT=null, maxT=null, minH=null, maxH=null;
-let dirtySP=false, dirtyHys=false, debounceT=null;
+let dirtySP=false, dirtyHys=false;
+let debounceT=null;
 
-/* =========================
-   4) NORMAL SAAT (TARAYICI)
-   ========================= */
+/* MQTT client (login sonrası init) */
+let client = null;
+
+/* ===================== ZAMAN ===================== */
 function pad2(n){ return (n<10 ? "0"+n : ""+n); }
 function fmtLocalNow(){
   const d = new Date();
-  return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ` +
-         `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  return pad2(d.getDate())+"/"+pad2(d.getMonth()+1)+"/"+d.getFullYear()+" "+
+         pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());
 }
 setInterval(()=>{ elClock.textContent = "Saat: " + fmtLocalNow(); }, 1000);
 
-/* =========================
-   5) MIN/MAX
-   ========================= */
-function updateMinMax(t, h){
-  if (t != null && Number.isFinite(t)){
-    minT = (minT==null) ? t : Math.min(minT, t);
-    maxT = (maxT==null) ? t : Math.max(maxT, t);
-  }
-  if (h != null && Number.isFinite(h)){
-    minH = (minH==null) ? h : Math.min(minH, h);
-    maxH = (maxH==null) ? h : Math.max(maxH, h);
-  }
-  elTMM.textContent = (minT==null||maxT==null) ? "--" : `${minT.toFixed(1)} / ${maxT.toFixed(1)} °C`;
-  elHMM.textContent = (minH==null||maxH==null) ? "--" : `${minH.toFixed(1)} / ${maxH.toFixed(1)} %`;
+function fmtTRT(epochUtc, tzOffS){
+  const dt = new Date((epochUtc + tzOffS) * 1000);
+  return pad2(dt.getUTCDate())+"/"+pad2(dt.getUTCMonth()+1)+"/"+dt.getUTCFullYear()+" "+
+         pad2(dt.getUTCHours())+":"+pad2(dt.getUTCMinutes())+":"+pad2(dt.getUTCSeconds());
 }
 
-/* =========================
-   6) UI BUTON STİLLERİ
-   ========================= */
+/* ===================== UI ===================== */
 function styleButtons(){
+  // Mode button
   if (state.mode === "AUTO"){
     elModeBtn.className = "btn-green";
     elModeBtn.textContent = "AUTO";
@@ -231,6 +210,7 @@ function styleButtons(){
   }
   elModeTxt.textContent = state.mode || "--";
 
+  // Logic toggle
   if (state.logic === "AC"){
     elLogicBtn.className = "btn-blue";
     elLogicBtn.textContent = "AC";
@@ -239,6 +219,7 @@ function styleButtons(){
     elLogicBtn.textContent = "HEAT";
   }
 
+  // Outputs text
   elKombiTxt.textContent = state.kombi ? "ON" : "OFF";
   elKlimaTxt.textContent = state.klima ? "ON" : "OFF";
 
@@ -251,23 +232,70 @@ function styleButtons(){
 
   elKombiBtn.textContent = manual ? (state.kombi ? "KOMBI ON":"KOMBI OFF") : "KOMBI";
   elKlimaBtn.textContent = manual ? (state.klima ? "KLIMA ON":"KLIMA OFF") : "KLIMA";
+
+  // Min/Max
+  const tmm = (state.tmin==null || state.tmax==null) ? "--" : `${Number(state.tmin).toFixed(1)} / ${Number(state.tmax).toFixed(1)} °C`;
+  const hmm = (state.hmin==null || state.hmax==null) ? "--" : `${Number(state.hmin).toFixed(1)} / ${Number(state.hmax).toFixed(1)} %`;
+  elTmm.textContent = tmm;
+  elHmm.textContent = hmm;
 }
 
-/* =========================
-   7) MQTT (HATA FIX: client önce declare)
-   ========================= */
-let client = null;        // <-- fix burada
-let mqttStarted = false;
-
+/* ===================== MQTT CMD ===================== */
 function publishCmd(obj){
   if (!client || !client.connected) return;
   obj.key = CMD_KEY;
   client.publish(T_CMD, JSON.stringify(obj), {qos:0, retain:false});
 }
 
+function scheduleAutoSave(){
+  if (debounceT) clearTimeout(debounceT);
+  debounceT = setTimeout(()=>{
+    const sp = parseFloat(elSP.value);
+    const hys = parseFloat(elHys.value);
+    if (Number.isNaN(sp) || Number.isNaN(hys)) return;
+    publishCmd({ sp, hys });
+    dirtySP=false; dirtyHys=false;
+  }, 700);
+}
+
+elSP.addEventListener("input", ()=>{ dirtySP=true; scheduleAutoSave(); });
+elHys.addEventListener("input", ()=>{ dirtyHys=true; scheduleAutoSave(); });
+
+elSaveBtn.addEventListener("click", ()=>{
+  const sp = parseFloat(elSP.value);
+  const hys = parseFloat(elHys.value);
+  if (Number.isNaN(sp) || Number.isNaN(hys)) return;
+  publishCmd({ sp, hys });
+  dirtySP=false; dirtyHys=false;
+});
+
+elModeBtn.addEventListener("click", ()=>{
+  const next = (state.mode === "AUTO") ? "MANUAL" : "AUTO";
+  publishCmd({ mode: next });
+});
+
+elLogicBtn.addEventListener("click", ()=>{
+  const next = (state.logic === "AC") ? "HEAT" : "AC";
+  publishCmd({ logic: next });
+});
+
+elKombiBtn.addEventListener("click", ()=>{
+  const next = state.kombi ? "OFF" : "ON";
+  publishCmd({ kombi: next });
+});
+
+elKlimaBtn.addEventListener("click", ()=>{
+  const next = state.klima ? "OFF" : "ON";
+  publishCmd({ klima: next });
+});
+
+minmaxBtn.addEventListener("click", ()=>{
+  publishCmd({ minmax: "RESET" });
+});
+
+/* ===================== MQTT START/STOP ===================== */
 function mqttStart(){
-  if (mqttStarted) return;
-  mqttStarted = true;
+  if (client) return; // zaten başladı
 
   const clientId = "web_" + Math.random().toString(16).slice(2);
   client = mqtt.connect(BROKER_WSS, {
@@ -302,144 +330,113 @@ function mqttStart(){
   client.on("message", (topic, payload)=>{
     let j=null;
     try { j = JSON.parse(payload.toString()); } catch(e){ return; }
-    if (!j) return;
 
     if (topic === T_TELE){
-      const t = (j.t == null) ? null : Number(j.t);
-      const h = (j.h == null) ? null : Number(j.h);
+      if (j.t == null) elT.textContent = "--";
+      else elT.textContent = Number(j.t).toFixed(1) + " °C";
 
-      elT.textContent = (t==null || !Number.isFinite(t)) ? "--" : t.toFixed(1) + " °C";
-      elH.textContent = (h==null || !Number.isFinite(h)) ? "--" : h.toFixed(1) + " %";
-      updateMinMax(t, h);
+      if (j.h == null) elH.textContent = "--";
+      else elH.textContent = Number(j.h).toFixed(1) + " %";
+
+      // Son okuma zamanı (device epoch)
+      if (j.ts && j.tz_off_s != null){
+        elLastSample.textContent = "Son okuma: " + fmtTRT(Number(j.ts), Number(j.tz_off_s));
+      }
 
       elNTP.textContent = "NTP: " + (j.ntp_ok ? "OK" : "BEKLENİYOR");
 
-      if (j.mode) state.mode = j.mode;
+      if (j.mode)  state.mode = j.mode;
       if (j.logic) state.logic = j.logic;
-      if (j.sp != null) state.sp = Number(j.sp);
+      if (j.sp != null)  state.sp = Number(j.sp);
       if (j.hys != null) state.hys = Number(j.hys);
       if (j.kombi != null) state.kombi = Number(j.kombi);
       if (j.klima != null) state.klima = Number(j.klima);
+      if (j.tz_off_s != null) state.tz_off_s = Number(j.tz_off_s);
+      if (j.ntp_ok != null) state.ntp_ok = Number(j.ntp_ok);
+
+      // Min/Max (NodeMCU'dan)
+      state.tmin = (j.tmin==null ? null : Number(j.tmin));
+      state.tmax = (j.tmax==null ? null : Number(j.tmax));
+      state.hmin = (j.hmin==null ? null : Number(j.hmin));
+      state.hmax = (j.hmax==null ? null : Number(j.hmax));
 
       if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
       if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+
       styleButtons();
     }
 
     if (topic === T_STATE){
-      if (j.mode) state.mode = j.mode;
+      if (j.mode)  state.mode = j.mode;
       if (j.logic) state.logic = j.logic;
-      if (j.sp != null) state.sp = Number(j.sp);
+      if (j.sp != null)  state.sp = Number(j.sp);
       if (j.hys != null) state.hys = Number(j.hys);
 
       if (j.kombi) state.kombi = (j.kombi === "ON") ? 1 : 0;
       if (j.klima) state.klima = (j.klima === "ON") ? 1 : 0;
 
+      state.tmin = (j.tmin==null ? null : Number(j.tmin));
+      state.tmax = (j.tmax==null ? null : Number(j.tmax));
+      state.hmin = (j.hmin==null ? null : Number(j.hmin));
+      state.hmax = (j.hmax==null ? null : Number(j.hmax));
+
       if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
       if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+
       styleButtons();
     }
   });
 }
 
 function mqttStop(){
-  mqttStarted = false;
-  try { if (client) client.end(true); } catch(e){}
+  if (!client) return;
+  try { client.end(true); } catch(e) {}
   client = null;
-  elConn.textContent = "KAPALI";
-  elConn.style.color = "#b00020";
 }
 
-/* =========================
-   8) PANEL EVENTLERİ
-   ========================= */
-function scheduleAutoSave(){
-  if (debounceT) clearTimeout(debounceT);
-  debounceT = setTimeout(()=>{
-    const sp = parseFloat(elSP.value);
-    const hys = parseFloat(elHys.value);
-    if (Number.isNaN(sp) || Number.isNaN(hys)) return;
-    publishCmd({ sp, hys });
-    dirtySP=false; dirtyHys=false;
-  }, 1500);
-}
-
-elSP.addEventListener("input", ()=>{ dirtySP=true; scheduleAutoSave(); });
-elHys.addEventListener("input", ()=>{ dirtyHys=true; scheduleAutoSave(); });
-
-elSaveBtn.addEventListener("click", ()=>{
-  const sp = parseFloat(elSP.value);
-  const hys = parseFloat(elHys.value);
-  if (Number.isNaN(sp) || Number.isNaN(hys)) return;
-  publishCmd({ sp, hys });
-  dirtySP=false; dirtyHys=false;
-});
-
-elModeBtn.addEventListener("click", ()=>{
-  const next = (state.mode === "AUTO") ? "MANUAL" : "AUTO";
-  publishCmd({ mode: next });
-});
-
-elLogicBtn.addEventListener("click", ()=>{
-  const next = (state.logic === "AC") ? "HEAT" : "AC";
-  publishCmd({ logic: next });
-});
-
-elKombiBtn.addEventListener("click", ()=>{
-  const next = state.kombi ? "OFF" : "ON";
-  publishCmd({ kombi: next });
-});
-
-elKlimaBtn.addEventListener("click", ()=>{
-  const next = state.klima ? "OFF" : "ON";
-  publishCmd({ klima: next });
-});
-
-elResetMM.addEventListener("click", ()=>{
-  minT=maxT=minH=maxH=null;
-  updateMinMax(null, null);
-});
-
-/* =========================
-   9) LOGIN AKIŞI
-   ========================= */
-function showPanel(){
-  loginScreen.classList.add("hide");
-  panelScreen.classList.remove("hide");
-  mqttStart(); // login sonrası kesin başlat
-}
-
+/* ===================== LOGIN FLOW ===================== */
 function showLogin(){
-  panelScreen.classList.add("hide");
-  loginScreen.classList.remove("hide");
+  panelView.classList.add("hidden");
+  loginView.classList.remove("hidden");
+  loginErr.textContent = "";
+  mqttStop();
 }
 
-function tryLogin(){
-  const u = (elU.value||"").trim();
-  const p = (elP.value||"").trim();
+function showPanel(){
+  loginView.classList.add("hidden");
+  panelView.classList.remove("hidden");
+  mqttStart();
+}
 
+function doLogin(){
+  const u = (loginUser.value || "").trim();
+  const p = (loginPass.value || "");
   if (u === LOGIN_USER && p === LOGIN_PASS){
-    elLoginErr.textContent = "";
-    sessionStorage.setItem("hvac_auth","1");
+    localStorage.setItem("hvac_auth", "1");
     showPanel();
   } else {
-    elLoginErr.textContent = "Hatalı kullanıcı adı veya şifre.";
+    loginErr.textContent = "Hatalı kullanıcı adı veya şifre.";
   }
 }
 
-elLoginBtn.addEventListener("click", tryLogin);
-elP.addEventListener("keydown", (e)=>{ if (e.key==="Enter") tryLogin(); });
-elU.addEventListener("keydown", (e)=>{ if (e.key==="Enter") tryLogin(); });
+loginBtn.addEventListener("click", doLogin);
+loginPass.addEventListener("keydown", (e)=>{ if (e.key === "Enter") doLogin(); });
 
-elLogoutBtn.addEventListener("click", ()=>{
-  sessionStorage.removeItem("hvac_auth");
-  mqttStop();
+loginClearBtn.addEventListener("click", ()=>{
+  loginUser.value = "";
+  loginPass.value = "";
+  loginErr.textContent = "";
+});
+
+logoutBtn.addEventListener("click", ()=>{
+  localStorage.removeItem("hvac_auth");
   showLogin();
 });
 
-/* Sayfa açılınca */
-if (sessionStorage.getItem("hvac_auth")==="1") showPanel();
+/* İlk açılış */
+if (localStorage.getItem("hvac_auth") === "1") showPanel();
 else showLogin();
 </script>
+
 </body>
 </html>

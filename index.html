@@ -74,7 +74,7 @@
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
 /* ====== GÖMÜLÜ AYARLAR (input yok) ====== */
-const BROKER_WSS = "wss://broker.hivemq.com:8884/mqtt"; // HiveMQ public TLS Websocket :contentReference[oaicite:4]{index=4}
+const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
 const BASE_TOPIC = "omer/hvac/9f3a1c7b2d4e6f8a";
 const CMD_KEY    = "K!n@l1_2026_x9Qp7v";
 
@@ -300,3 +300,4 @@ client.on("message", (topic, payload)=>{
 </script>
 </body>
 </html>
+

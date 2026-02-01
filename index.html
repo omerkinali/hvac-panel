@@ -12,7 +12,7 @@
     .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; }
     .val { font-weight: 800; }
     .muted { color:#555; font-size: .92rem; margin-top: 6px; }
-    input { padding: 8px; border: 1px solid #bbb; border-radius: 10px; width: 120px; background:#fafafa; }
+    input { padding: 8px; border: 1px solid #bbb; border-radius: 10px; width: 140px; background:#fafafa; }
     button { padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; background: #f7f7f7; cursor: pointer; }
     button:active { transform: translateY(1px); }
     button:disabled { opacity:.55; cursor:not-allowed; }
@@ -23,20 +23,67 @@
     .btn-blue  { background: #dbeafe; border-color:#93c5fd; }
     .btn-gray  { background: #f3f4f6; border-color:#d1d5db; }
 
+    .hide { display:none !important; }
+
+    /* Login */
+    .login-wrap { max-width: 420px; margin: 10vh auto 0 auto; }
+    .login-card { padding: 18px; border: 2px solid #6b8e23; border-radius: 12px; background:#e6e6e6; }
+    .login-row { display:flex; flex-direction:column; gap:10px; margin-top: 12px; }
+    .login-row label { font-size: .95rem; color:#222; }
+    .login-row input { width: 100%; }
+    .login-actions { display:flex; gap:10px; margin-top: 14px; align-items:center; justify-content:flex-end; }
+    .login-err { color:#b00020; font-size:.95rem; margin-top:10px; min-height: 1.2em; }
+
     @media (max-width: 900px){
       .top { grid-template-columns: 1fr; }
     }
   </style>
 </head>
+
 <body>
-<div class="wrap">
+
+<!-- ===== LOGIN ===== -->
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <h2>🔒 Giriş</h2>
+    <div class="muted">Kullanıcı adı ve şifreyi girin.</div>
+
+    <div class="login-row">
+      <label>Kullanıcı adı</label>
+      <input id="u" autocomplete="username" />
+      <label>Şifre</label>
+      <input id="p" type="password" autocomplete="current-password" />
+    </div>
+
+    <div class="login-actions">
+      <button id="loginBtn" class="btn-green">Giriş</button>
+    </div>
+
+    <div id="loginErr" class="login-err"></div>
+  </div>
+</div>
+
+<!-- ===== PANEL ===== -->
+<div id="panelScreen" class="wrap hide">
   <div class="top">
     <div class="card">
-      <h2>📡 Ölçümler</h2>
+      <div class="row" style="align-items:flex-start;">
+        <h2 style="margin:0;">📡 Ölçümler</h2>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button id="minmaxResetBtn" class="btn-gray">Min/Max Sıfırla</button>
+          <button id="logoutBtn" class="btn-red">Çıkış</button>
+        </div>
+      </div>
+
       <div class="row"><div>Durum</div><div class="val" id="conn">Bağlanıyor…</div></div>
       <div class="row"><div>Sıcaklık</div><div class="val" id="t">--</div></div>
       <div class="row"><div>Nem</div><div class="val" id="h">--</div></div>
-      <div class="muted" id="ts">Zaman: --</div>
+      <div class="row"><div>Min/Max (T)</div><div class="val" id="tmm">--</div></div>
+      <div class="row"><div>Min/Max (H)</div><div class="val" id="hmm">--</div></div>
+
+      <!-- İstediğin: örnekleme zamanı değil NORMAL saat -->
+      <div class="muted" id="clock">Saat: --</div>
+
       <div class="muted" id="ntp">NTP: --</div>
       <div class="muted" id="err" style="color:#8a5a00;"></div>
     </div>
@@ -63,7 +110,7 @@
         <button id="klimaBtn">KLIMA</button>
       </div>
 
-      <div class="muted" id="note">
+      <div class="muted">
         Not: MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.
       </div>
     </div>
@@ -72,9 +119,19 @@
 
 <!-- mqtt.js -->
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
 <script>
-/* ====== GÖMÜLÜ AYARLAR (input yok) ====== */
+/* =========================
+   1) AYARLAR
+   ========================= */
+const LOGIN_USER = "admin";   // istediğin kullanıcı adı
+const LOGIN_PASS = "1234";    // istediğin şifre
+
+// Broker (EMQX public WSS)
 const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
+// HiveMQ public istersen:
+// const BROKER_WSS = "wss://broker.hivemq.com:8884/mqtt";
+
 const BASE_TOPIC = "omer/hvac/9f3a1c7b2d4e6f8a";
 const CMD_KEY    = "K!n@l1_2026_x9Qp7v";
 
@@ -83,10 +140,26 @@ const T_STATE = `${BASE_TOPIC}/state`;
 const T_CMD   = `${BASE_TOPIC}/cmd`;
 const T_LWT   = `${BASE_TOPIC}/lwt`;
 
+/* =========================
+   2) DOM
+   ========================= */
+const loginScreen = document.getElementById("loginScreen");
+const panelScreen = document.getElementById("panelScreen");
+
+const elU = document.getElementById("u");
+const elP = document.getElementById("p");
+const elLoginBtn = document.getElementById("loginBtn");
+const elLoginErr = document.getElementById("loginErr");
+
+const elLogoutBtn = document.getElementById("logoutBtn");
+const elResetMM = document.getElementById("minmaxResetBtn");
+
 const elConn = document.getElementById("conn");
 const elT = document.getElementById("t");
 const elH = document.getElementById("h");
-const elTS = document.getElementById("ts");
+const elTMM = document.getElementById("tmm");
+const elHMM = document.getElementById("hmm");
+const elClock = document.getElementById("clock");
 const elNTP = document.getElementById("ntp");
 const elErr = document.getElementById("err");
 
@@ -98,30 +171,54 @@ const elSP = document.getElementById("sp");
 const elHys = document.getElementById("hys");
 const elLogicBtn = document.getElementById("logicBtn");
 const elSaveBtn = document.getElementById("saveBtn");
-
 const elModeBtn = document.getElementById("modeBtn");
 const elKombiBtn = document.getElementById("kombiBtn");
 const elKlimaBtn = document.getElementById("klimaBtn");
 
+/* =========================
+   3) PANEL STATE
+   ========================= */
 let state = {
   mode: null, logic: "AC",
   sp: 25.0, hys: 1.0,
   kombi: 0, klima: 0,
-  tz_off_s: 0, ntp_ok: 0, ts: 0
+  ntp_ok: 0
 };
 
-let dirtySP=false, dirtyHys=false;
-let debounceT=null;
+let minT=null, maxT=null, minH=null, maxH=null;
+let dirtySP=false, dirtyHys=false, debounceT=null;
 
+/* =========================
+   4) NORMAL SAAT (TARAYICI)
+   ========================= */
 function pad2(n){ return (n<10 ? "0"+n : ""+n); }
-function fmtTRT(epochUtc, tzOffS){
-  const dt = new Date((epochUtc + tzOffS) * 1000);
-  return pad2(dt.getUTCDate())+"/"+pad2(dt.getUTCMonth()+1)+"/"+dt.getUTCFullYear()+" "+
-         pad2(dt.getUTCHours())+":"+pad2(dt.getUTCMinutes())+":"+pad2(dt.getUTCSeconds());
+function fmtLocalNow(){
+  const d = new Date();
+  return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ` +
+         `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+setInterval(()=>{ elClock.textContent = "Saat: " + fmtLocalNow(); }, 1000);
+
+/* =========================
+   5) MIN/MAX
+   ========================= */
+function updateMinMax(t, h){
+  if (t != null && Number.isFinite(t)){
+    minT = (minT==null) ? t : Math.min(minT, t);
+    maxT = (maxT==null) ? t : Math.max(maxT, t);
+  }
+  if (h != null && Number.isFinite(h)){
+    minH = (minH==null) ? h : Math.min(minH, h);
+    maxH = (maxH==null) ? h : Math.max(maxH, h);
+  }
+  elTMM.textContent = (minT==null||maxT==null) ? "--" : `${minT.toFixed(1)} / ${maxT.toFixed(1)} °C`;
+  elHMM.textContent = (minH==null||maxH==null) ? "--" : `${minH.toFixed(1)} / ${maxH.toFixed(1)} %`;
 }
 
+/* =========================
+   6) UI BUTON STİLLERİ
+   ========================= */
 function styleButtons(){
-  // Mode button
   if (state.mode === "AUTO"){
     elModeBtn.className = "btn-green";
     elModeBtn.textContent = "AUTO";
@@ -134,7 +231,6 @@ function styleButtons(){
   }
   elModeTxt.textContent = state.mode || "--";
 
-  // Logic toggle
   if (state.logic === "AC"){
     elLogicBtn.className = "btn-blue";
     elLogicBtn.textContent = "AC";
@@ -143,11 +239,9 @@ function styleButtons(){
     elLogicBtn.textContent = "HEAT";
   }
 
-  // Outputs text
   elKombiTxt.textContent = state.kombi ? "ON" : "OFF";
   elKlimaTxt.textContent = state.klima ? "ON" : "OFF";
 
-  // Manual buttons enabled only in MANUAL
   const manual = (state.mode === "MANUAL");
   elKombiBtn.disabled = !manual;
   elKlimaBtn.disabled = !manual;
@@ -159,11 +253,106 @@ function styleButtons(){
   elKlimaBtn.textContent = manual ? (state.klima ? "KLIMA ON":"KLIMA OFF") : "KLIMA";
 }
 
+/* =========================
+   7) MQTT (HATA FIX: client önce declare)
+   ========================= */
+let client = null;        // <-- fix burada
+let mqttStarted = false;
+
 function publishCmd(obj){
+  if (!client || !client.connected) return;
   obj.key = CMD_KEY;
   client.publish(T_CMD, JSON.stringify(obj), {qos:0, retain:false});
 }
 
+function mqttStart(){
+  if (mqttStarted) return;
+  mqttStarted = true;
+
+  const clientId = "web_" + Math.random().toString(16).slice(2);
+  client = mqtt.connect(BROKER_WSS, {
+    clientId,
+    clean: true,
+    reconnectPeriod: 2000,
+    connectTimeout: 8000,
+    protocolVersion: 4
+  });
+
+  client.on("connect", ()=>{
+    elConn.textContent = "BAĞLANDI";
+    elConn.style.color = "#0a7a2f";
+    elErr.textContent = "";
+    client.subscribe([T_TELE, T_STATE, T_LWT], {qos:0});
+  });
+
+  client.on("reconnect", ()=>{
+    elConn.textContent = "Bağlanıyor…";
+    elConn.style.color = "#333";
+  });
+
+  client.on("offline", ()=>{
+    elConn.textContent = "KAPALI";
+    elConn.style.color = "#b00020";
+  });
+
+  client.on("error", (e)=>{
+    elErr.textContent = "MQTT hata: " + (e?.message || e);
+  });
+
+  client.on("message", (topic, payload)=>{
+    let j=null;
+    try { j = JSON.parse(payload.toString()); } catch(e){ return; }
+    if (!j) return;
+
+    if (topic === T_TELE){
+      const t = (j.t == null) ? null : Number(j.t);
+      const h = (j.h == null) ? null : Number(j.h);
+
+      elT.textContent = (t==null || !Number.isFinite(t)) ? "--" : t.toFixed(1) + " °C";
+      elH.textContent = (h==null || !Number.isFinite(h)) ? "--" : h.toFixed(1) + " %";
+      updateMinMax(t, h);
+
+      elNTP.textContent = "NTP: " + (j.ntp_ok ? "OK" : "BEKLENİYOR");
+
+      if (j.mode) state.mode = j.mode;
+      if (j.logic) state.logic = j.logic;
+      if (j.sp != null) state.sp = Number(j.sp);
+      if (j.hys != null) state.hys = Number(j.hys);
+      if (j.kombi != null) state.kombi = Number(j.kombi);
+      if (j.klima != null) state.klima = Number(j.klima);
+
+      if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
+      if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+      styleButtons();
+    }
+
+    if (topic === T_STATE){
+      if (j.mode) state.mode = j.mode;
+      if (j.logic) state.logic = j.logic;
+      if (j.sp != null) state.sp = Number(j.sp);
+      if (j.hys != null) state.hys = Number(j.hys);
+
+      if (j.kombi) state.kombi = (j.kombi === "ON") ? 1 : 0;
+      if (j.klima) state.klima = (j.klima === "ON") ? 1 : 0;
+
+      if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
+      if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+      styleButtons();
+    }
+  });
+}
+
+function mqttStop(){
+  mqttStarted = false;
+  try { if (client) client.end(true); } catch(e){}
+  client = null;
+  elConn.textContent = "KAPALI";
+  elConn.style.color = "#b00020";
+}
+
+/* =========================
+   8) PANEL EVENTLERİ
+   ========================= */
 function scheduleAutoSave(){
   if (debounceT) clearTimeout(debounceT);
   debounceT = setTimeout(()=>{
@@ -172,7 +361,7 @@ function scheduleAutoSave(){
     if (Number.isNaN(sp) || Number.isNaN(hys)) return;
     publishCmd({ sp, hys });
     dirtySP=false; dirtyHys=false;
-  }, 2000);
+  }, 1500);
 }
 
 elSP.addEventListener("input", ()=>{ dirtySP=true; scheduleAutoSave(); });
@@ -206,97 +395,51 @@ elKlimaBtn.addEventListener("click", ()=>{
   publishCmd({ klima: next });
 });
 
-/* ====== MQTT Connect (auto) ====== */
-const clientId = "web_" + Math.random().toString(16).slice(2);
-const client = mqtt.connect(BROKER_WSS, {
-  clientId,
-  clean: true,
-  reconnectPeriod: 2000,
-  connectTimeout: 8000,
-  protocolVersion: 4
+elResetMM.addEventListener("click", ()=>{
+  minT=maxT=minH=maxH=null;
+  updateMinMax(null, null);
 });
 
-client.on("connect", ()=>{
-  elConn.textContent = "BAĞLANDI";
-  elConn.style.color = "#0a7a2f";
-  elErr.textContent = "";
-  client.subscribe([T_TELE, T_STATE, T_LWT], {qos:0});
-});
+/* =========================
+   9) LOGIN AKIŞI
+   ========================= */
+function showPanel(){
+  loginScreen.classList.add("hide");
+  panelScreen.classList.remove("hide");
+  mqttStart(); // login sonrası kesin başlat
+}
 
-client.on("reconnect", ()=>{
-  elConn.textContent = "Bağlanıyor…";
-  elConn.style.color = "#333";
-});
+function showLogin(){
+  panelScreen.classList.add("hide");
+  loginScreen.classList.remove("hide");
+}
 
-client.on("offline", ()=>{
-  elConn.textContent = "KAPALI";
-  elConn.style.color = "#b00020";
-});
+function tryLogin(){
+  const u = (elU.value||"").trim();
+  const p = (elP.value||"").trim();
 
-client.on("error", (e)=>{
-  elErr.textContent = "MQTT hata: " + (e?.message || e);
-});
-
-client.on("message", (topic, payload)=>{
-  let j=null;
-  try { j = JSON.parse(payload.toString()); } catch(e){ /*ignore*/ }
-
-  if (topic === T_LWT){
-    // online/offline string
-    const s = payload.toString();
-    // sadece bilgi; connect zaten state’i belirliyor
-    return;
+  if (u === LOGIN_USER && p === LOGIN_PASS){
+    elLoginErr.textContent = "";
+    sessionStorage.setItem("hvac_auth","1");
+    showPanel();
+  } else {
+    elLoginErr.textContent = "Hatalı kullanıcı adı veya şifre.";
   }
+}
 
-  if (!j) return;
+elLoginBtn.addEventListener("click", tryLogin);
+elP.addEventListener("keydown", (e)=>{ if (e.key==="Enter") tryLogin(); });
+elU.addEventListener("keydown", (e)=>{ if (e.key==="Enter") tryLogin(); });
 
-  // TELE: t/h + state snapshot
-  if (topic === T_TELE){
-    if (j.t == null) elT.textContent = "--";
-    else elT.textContent = Number(j.t).toFixed(1) + " °C";
-
-    if (j.h == null) elH.textContent = "--";
-    else elH.textContent = Number(j.h).toFixed(1) + " %";
-
-    if (j.ts && j.tz_off_s != null){
-      elTS.textContent = "Zaman: " + fmtTRT(Number(j.ts), Number(j.tz_off_s));
-    }
-
-    elNTP.textContent = "NTP: " + (j.ntp_ok ? "OK" : "BEKLENİYOR");
-
-    // update state fields if present
-    if (j.mode)  state.mode = j.mode;
-    if (j.logic) state.logic = j.logic;
-    if (j.sp != null)  state.sp = Number(j.sp);
-    if (j.hys != null) state.hys = Number(j.hys);
-    if (j.kombi != null) state.kombi = Number(j.kombi);
-    if (j.klima != null) state.klima = Number(j.klima);
-    if (j.tz_off_s != null) state.tz_off_s = Number(j.tz_off_s);
-    if (j.ntp_ok != null) state.ntp_ok = Number(j.ntp_ok);
-
-    if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
-    if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
-
-    styleButtons();
-  }
-
-  // STATE (retained): config + outputs
-  if (topic === T_STATE){
-    if (j.mode)  state.mode = j.mode;
-    if (j.logic) state.logic = j.logic;
-    if (j.sp != null)  state.sp = Number(j.sp);
-    if (j.hys != null) state.hys = Number(j.hys);
-
-    // retained state outputs as "ON/OFF"
-    if (j.kombi) state.kombi = (j.kombi === "ON") ? 1 : 0;
-    if (j.klima) state.klima = (j.klima === "ON") ? 1 : 0;
-
-    if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
-    if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
-
-    styleButtons();
-  }
+elLogoutBtn.addEventListener("click", ()=>{
+  sessionStorage.removeItem("hvac_auth");
+  mqttStop();
+  showLogin();
 });
+
+/* Sayfa açılınca */
+if (sessionStorage.getItem("hvac_auth")==="1") showPanel();
+else showLogin();
 </script>
 </body>
 </html>

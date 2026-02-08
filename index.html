@@ -25,6 +25,11 @@
 
     .hidden { display:none !important; }
 
+    .pill { padding: 3px 10px; border-radius: 999px; border:1px solid #bbb; font-weight:800; font-size:.9rem; }
+    .pill-ok { background:#dcfce7; border-color:#86efac; }
+    .pill-bad{ background:#fee2e2; border-color:#fca5a5; }
+    .pill-warn{ background:#fff7ed; border-color:#fdba74; }
+
     /* Login */
     .loginWrap { max-width: 420px; margin: 60px auto; }
     .loginCard { padding: 18px; border: 2px solid #6b8e23; border-radius: 12px; background:#e6e6e6; }
@@ -83,9 +88,28 @@
 
     <div class="card">
       <h2>🎛️ Kontrol</h2>
+
       <div class="row"><div>Mod</div><div class="val" id="modeTxt">--</div></div>
-      <div class="row"><div>Kombi</div><div class="val" id="kombiTxt">--</div></div>
-      <div class="row"><div>Klima</div><div class="val" id="klimaTxt">--</div></div>
+
+      <!-- Kombi / Klima gerçek durum -->
+      <div class="row">
+        <div>Kombi (ACT)</div>
+        <div class="val" id="kombiTxt">--</div>
+      </div>
+      <div class="row">
+        <div>Klima (ACT)</div>
+        <div class="val" id="klimaTxt">--</div>
+      </div>
+
+      <!-- Aktüatör node durumları -->
+      <div class="row">
+        <div>Kombi Node</div>
+        <div class="val"><span id="kNodePill" class="pill">--</span> <span id="kNodeInfo" class="muted"></span></div>
+      </div>
+      <div class="row">
+        <div>Klima Node</div>
+        <div class="val"><span id="lNodePill" class="pill">--</span> <span id="lNodeInfo" class="muted"></span></div>
+      </div>
 
       <div class="row">
         <div>Ayarlar</div>
@@ -103,6 +127,8 @@
         <button id="klimaBtn">KLIMA</button>
       </div>
 
+      <div class="muted" id="mismatchWarn"></div>
+
       <div class="muted">
         Not: MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.
       </div>
@@ -114,7 +140,6 @@
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
 /* ===================== AYARLAR ===================== */
-// Broker (stabil)
 const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
 
 // Topic + key
@@ -129,6 +154,12 @@ const T_TELE  = `${BASE_TOPIC}/tele`;
 const T_STATE = `${BASE_TOPIC}/state`;
 const T_CMD   = `${BASE_TOPIC}/cmd`;
 const T_LWT   = `${BASE_TOPIC}/lwt`;
+
+// Actuator topics (direct visibility)
+const T_K_LWT   = `${BASE_TOPIC}/act/kombi/lwt`;
+const T_K_STATE = `${BASE_TOPIC}/act/kombi/state`;
+const T_L_LWT   = `${BASE_TOPIC}/act/klima/lwt`;
+const T_L_STATE = `${BASE_TOPIC}/act/klima/state`;
 
 /* ===================== DOM ===================== */
 const loginView = document.getElementById("loginView");
@@ -153,6 +184,11 @@ const elModeTxt = document.getElementById("modeTxt");
 const elKombiTxt = document.getElementById("kombiTxt");
 const elKlimaTxt = document.getElementById("klimaTxt");
 
+const elKNodePill = document.getElementById("kNodePill");
+const elLNodePill = document.getElementById("lNodePill");
+const elKNodeInfo = document.getElementById("kNodeInfo");
+const elLNodeInfo = document.getElementById("lNodeInfo");
+
 const elSP = document.getElementById("sp");
 const elHys = document.getElementById("hys");
 const elLogicBtn = document.getElementById("logicBtn");
@@ -165,19 +201,34 @@ const elKlimaBtn = document.getElementById("klimaBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const minmaxBtn = document.getElementById("minmaxBtn");
 
+const elMisWarn = document.getElementById("mismatchWarn");
+
 /* ===================== STATE ===================== */
 let state = {
   mode: null, logic: "AC",
   sp: 25.0, hys: 1.0,
   kombi: 0, klima: 0,
   tz_off_s: 0, ntp_ok: 0, ts: 0,
-  tmin: null, tmax: null, hmin: null, hmax: null
+  tmin: null, tmax: null, hmin: null, hmax: null,
+
+  // added by MAIN:
+  kombi_online: 0, klima_online: 0,
+  kombi_cmd: 0, klima_cmd: 0,
+  kombi_act: -1, klima_act: -1,
+  kombi_mis: 0, klima_mis: 0,
+  kombi_rssi: 0, klima_rssi: 0
+};
+
+// direct actuator visibility
+let act = {
+  k_online: null, k_state: null, k_rssi: null, k_ts: null, k_ip: null,
+  l_online: null, l_state: null, l_rssi: null, l_ts: null, l_ip: null,
 };
 
 let dirtySP=false, dirtyHys=false;
 let debounceT=null;
 
-/* MQTT client (login sonrası init) */
+/* MQTT client */
 let client = null;
 
 /* ===================== ZAMAN ===================== */
@@ -193,6 +244,51 @@ function fmtTRT(epochUtc, tzOffS){
   const dt = new Date((epochUtc + tzOffS) * 1000);
   return pad2(dt.getUTCDate())+"/"+pad2(dt.getUTCMonth()+1)+"/"+dt.getUTCFullYear()+" "+
          pad2(dt.getUTCHours())+":"+pad2(dt.getUTCMinutes())+":"+pad2(dt.getUTCSeconds());
+}
+
+/* ===================== UI HELPERS ===================== */
+function setPill(el, text, kind){
+  el.textContent = text;
+  el.className = "pill " + (kind==="ok" ? "pill-ok" : kind==="bad" ? "pill-bad" : "pill-warn");
+}
+function fmtState01(v){
+  if (v === 1) return "ON";
+  if (v === 0) return "OFF";
+  return "--";
+}
+
+function updateActuatorUI(){
+  // Prefer direct actuator topics if present, else fallback to MAIN-provided
+  const kOnline = (act.k_online != null) ? act.k_online : (state.kombi_online ? true : false);
+  const lOnline = (act.l_online != null) ? act.l_online : (state.klima_online ? true : false);
+
+  const kState = (act.k_state != null) ? act.k_state : (state.kombi_act >= 0 ? state.kombi_act : null);
+  const lState = (act.l_state != null) ? act.l_state : (state.klima_act >= 0 ? state.klima_act : null);
+
+  const kRssi = (act.k_rssi != null) ? act.k_rssi : state.kombi_rssi;
+  const lRssi = (act.l_rssi != null) ? act.l_rssi : state.klima_rssi;
+
+  if (kOnline === true) setPill(elKNodePill, "ONLINE", "ok");
+  else if (kOnline === false) setPill(elKNodePill, "OFFLINE", "bad");
+  else setPill(elKNodePill, "--", "warn");
+
+  if (lOnline === true) setPill(elLNodePill, "ONLINE", "ok");
+  else if (lOnline === false) setPill(elLNodePill, "OFFLINE", "bad");
+  else setPill(elLNodePill, "--", "warn");
+
+  elKNodeInfo.textContent = (kState==null ? "" : (" " + fmtState01(kState))) + (kRssi ? `  RSSI:${kRssi}` : "");
+  elLNodeInfo.textContent = (lState==null ? "" : (" " + fmtState01(lState))) + (lRssi ? `  RSSI:${lRssi}` : "");
+
+  // mismatch warning from MAIN (authoritative)
+  const mis = (state.kombi_mis ? 1 : 0) || (state.klima_mis ? 1 : 0);
+  if (mis){
+    elMisWarn.textContent =
+      `Uyarı: Çıkış-mismatch var. ` +
+      `Kombi(cmd=${fmtState01(state.kombi_cmd)} act=${fmtState01(state.kombi_act)}) ` +
+      `Klima(cmd=${fmtState01(state.klima_cmd)} act=${fmtState01(state.klima_act)})`;
+  } else {
+    elMisWarn.textContent = "";
+  }
 }
 
 /* ===================== UI ===================== */
@@ -219,7 +315,7 @@ function styleButtons(){
     elLogicBtn.textContent = "HEAT";
   }
 
-  // Outputs text
+  // Outputs (ACT)
   elKombiTxt.textContent = state.kombi ? "ON" : "OFF";
   elKlimaTxt.textContent = state.klima ? "ON" : "OFF";
 
@@ -238,6 +334,8 @@ function styleButtons(){
   const hmm = (state.hmin==null || state.hmax==null) ? "--" : `${Number(state.hmin).toFixed(1)} / ${Number(state.hmax).toFixed(1)} %`;
   elTmm.textContent = tmm;
   elHmm.textContent = hmm;
+
+  updateActuatorUI();
 }
 
 /* ===================== MQTT CMD ===================== */
@@ -295,7 +393,7 @@ minmaxBtn.addEventListener("click", ()=>{
 
 /* ===================== MQTT START/STOP ===================== */
 function mqttStart(){
-  if (client) return; // zaten başladı
+  if (client) return;
 
   const clientId = "web_" + Math.random().toString(16).slice(2);
   client = mqtt.connect(BROKER_WSS, {
@@ -310,7 +408,7 @@ function mqttStart(){
     elConn.textContent = "BAĞLANDI";
     elConn.style.color = "#0a7a2f";
     elErr.textContent = "";
-    client.subscribe([T_TELE, T_STATE, T_LWT], {qos:0});
+    client.subscribe([T_TELE, T_STATE, T_LWT, T_K_LWT, T_K_STATE, T_L_LWT, T_L_STATE], {qos:0});
   });
 
   client.on("reconnect", ()=>{
@@ -329,7 +427,38 @@ function mqttStart(){
 
   client.on("message", (topic, payload)=>{
     let j=null;
-    try { j = JSON.parse(payload.toString()); } catch(e){ return; }
+    const ps = payload.toString();
+
+    // LWT strings
+    if (topic === T_K_LWT){
+      act.k_online = (ps === "online") ? true : (ps === "offline") ? false : null;
+      updateActuatorUI();
+      return;
+    }
+    if (topic === T_L_LWT){
+      act.l_online = (ps === "online") ? true : (ps === "offline") ? false : null;
+      updateActuatorUI();
+      return;
+    }
+
+    try { j = JSON.parse(ps); } catch(e){ return; }
+
+    if (topic === T_K_STATE){
+      if (j.state != null) act.k_state = Number(j.state);
+      if (j.rssi != null) act.k_rssi = Number(j.rssi);
+      if (j.ts != null) act.k_ts = Number(j.ts);
+      if (j.ip != null) act.k_ip = String(j.ip);
+      updateActuatorUI();
+      return;
+    }
+    if (topic === T_L_STATE){
+      if (j.state != null) act.l_state = Number(j.state);
+      if (j.rssi != null) act.l_rssi = Number(j.rssi);
+      if (j.ts != null) act.l_ts = Number(j.ts);
+      if (j.ip != null) act.l_ip = String(j.ip);
+      updateActuatorUI();
+      return;
+    }
 
     if (topic === T_TELE){
       if (j.t == null) elT.textContent = "--";
@@ -338,7 +467,6 @@ function mqttStart(){
       if (j.h == null) elH.textContent = "--";
       else elH.textContent = Number(j.h).toFixed(1) + " %";
 
-      // Son okuma zamanı (device epoch)
       if (j.ts && j.tz_off_s != null){
         elLastSample.textContent = "Son okuma: " + fmtTRT(Number(j.ts), Number(j.tz_off_s));
       }
@@ -351,10 +479,22 @@ function mqttStart(){
       if (j.hys != null) state.hys = Number(j.hys);
       if (j.kombi != null) state.kombi = Number(j.kombi);
       if (j.klima != null) state.klima = Number(j.klima);
+
+      // added fields
+      if (j.kombi_online != null) state.kombi_online = Number(j.kombi_online);
+      if (j.klima_online != null) state.klima_online = Number(j.klima_online);
+      if (j.kombi_cmd != null) state.kombi_cmd = Number(j.kombi_cmd);
+      if (j.klima_cmd != null) state.klima_cmd = Number(j.klima_cmd);
+      if (j.kombi_act != null) state.kombi_act = Number(j.kombi_act);
+      if (j.klima_act != null) state.klima_act = Number(j.klima_act);
+      if (j.kombi_mis != null) state.kombi_mis = Number(j.kombi_mis);
+      if (j.klima_mis != null) state.klima_mis = Number(j.klima_mis);
+      if (j.kombi_rssi != null) state.kombi_rssi = Number(j.kombi_rssi);
+      if (j.klima_rssi != null) state.klima_rssi = Number(j.klima_rssi);
+
       if (j.tz_off_s != null) state.tz_off_s = Number(j.tz_off_s);
       if (j.ntp_ok != null) state.ntp_ok = Number(j.ntp_ok);
 
-      // Min/Max (NodeMCU'dan)
       state.tmin = (j.tmin==null ? null : Number(j.tmin));
       state.tmax = (j.tmax==null ? null : Number(j.tmax));
       state.hmin = (j.hmin==null ? null : Number(j.hmin));
@@ -372,8 +512,21 @@ function mqttStart(){
       if (j.sp != null)  state.sp = Number(j.sp);
       if (j.hys != null) state.hys = Number(j.hys);
 
-      if (j.kombi) state.kombi = (j.kombi === "ON") ? 1 : 0;
-      if (j.klima) state.klima = (j.klima === "ON") ? 1 : 0;
+      // kombi/klima strings ON/OFF
+      if (j.kombi != null) state.kombi = (j.kombi === "ON") ? 1 : 0;
+      if (j.klima != null) state.klima = (j.klima === "ON") ? 1 : 0;
+
+      // added fields
+      if (j.kombi_online != null) state.kombi_online = Number(j.kombi_online);
+      if (j.klima_online != null) state.klima_online = Number(j.klima_online);
+      if (j.kombi_cmd != null) state.kombi_cmd = Number(j.kombi_cmd);
+      if (j.klima_cmd != null) state.klima_cmd = Number(j.klima_cmd);
+      if (j.kombi_act != null) state.kombi_act = Number(j.kombi_act);
+      if (j.klima_act != null) state.klima_act = Number(j.klima_act);
+      if (j.kombi_mis != null) state.kombi_mis = Number(j.kombi_mis);
+      if (j.klima_mis != null) state.klima_mis = Number(j.klima_mis);
+      if (j.kombi_rssi != null) state.kombi_rssi = Number(j.kombi_rssi);
+      if (j.klima_rssi != null) state.klima_rssi = Number(j.klima_rssi);
 
       state.tmin = (j.tmin==null ? null : Number(j.tmin));
       state.tmax = (j.tmax==null ? null : Number(j.tmax));

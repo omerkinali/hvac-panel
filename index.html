@@ -33,12 +33,13 @@
     .loginCard label { width: 110px; }
     .loginErr { color:#b00020; font-weight:700; margin-top:10px; min-height: 22px; }
 
-    /* Actuator status (Kombi/Klima feedback) */
+    /* Status coloring */
     .st-online  { color:#0a7a2f; font-weight: 900; }
     .st-offline { color:#b00020; font-weight: 900; }
     .st-on      { color:#0a7a2f; font-weight: 900; }
     .st-off     { color:#b00020; font-weight: 900; }
     .st-unk     { color:#555; font-weight: 900; }
+    .st-pend    { color:#1d4ed8; font-weight: 900; } /* pending */
 
     @media (max-width: 900px){
       .top { grid-template-columns: 1fr; }
@@ -76,6 +77,8 @@
       </div>
 
       <div class="row"><div>Durum</div><div class="val" id="conn">Bağlanıyor…</div></div>
+      <div class="row"><div>Ana NodeMCU</div><div class="val" id="mainDev">--</div></div>
+
       <div class="row"><div>Sıcaklık</div><div class="val" id="t">--</div></div>
       <div class="row"><div>Nem</div><div class="val" id="h">--</div></div>
 
@@ -92,7 +95,6 @@
       <h2>🎛️ Kontrol</h2>
       <div class="row"><div>Mod</div><div class="val" id="modeTxt">--</div></div>
 
-      <!-- Kombi/Klima durumları: FEEDBACK -->
       <div class="row"><div>Kombi</div><div class="val" id="kombiTxt">--</div></div>
       <div class="row"><div>Klima</div><div class="val" id="klimaTxt">--</div></div>
 
@@ -112,8 +114,9 @@
         <button id="klimaBtn">KLIMA</button>
       </div>
 
-      <div class="muted">
+      <div class="muted" id="hint">
         Not: MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.
+        <br/>Not2: OFFLINE durumda butonlar komut kabul etmez.
       </div>
     </div>
 
@@ -127,13 +130,24 @@ const BROKER_WSS = "wss://broker.emqx.io:8084/mqtt";
 const BASE_TOPIC = "omer/hvac/9f3a1c7b2d4e6f8a";
 const CMD_KEY    = "K!n@l1_2026_x9Qp7v";
 
-const LOGIN_USER = "omer";
-const LOGIN_PASS = "1234";
-
 const T_TELE  = `${BASE_TOPIC}/tele`;
 const T_STATE = `${BASE_TOPIC}/state`;
 const T_CMD   = `${BASE_TOPIC}/cmd`;
 const T_LWT   = `${BASE_TOPIC}/lwt`;
+
+/*
+  Ana NodeMCU’nun fişi çekildiğinde broker’ın "offline" yazması
+  keepalive timeout ile olur. Daha hızlı ve deterministik olması için
+  panel ayrıca “heartbeat TTL” uygular:
+
+  - Ana NodeMCU’dan TELE/STATE gelmezse X ms sonra OFFLINE kabul eder.
+  - TELE/STATE periyodu 10s olduğundan TTL ~20s uygundur.
+*/
+const MAIN_TTL_MS = 2000;
+
+/* “kapı” login (client-side) */
+const LOGIN_USER = "omer";
+const LOGIN_PASS = "1234";
 
 /* ===================== DOM ===================== */
 const loginView = document.getElementById("loginView");
@@ -145,6 +159,8 @@ const loginClearBtn = document.getElementById("loginClearBtn");
 const loginErr  = document.getElementById("loginErr");
 
 const elConn = document.getElementById("conn");
+const elMainDev = document.getElementById("mainDev");
+
 const elT = document.getElementById("t");
 const elH = document.getElementById("h");
 const elTmm = document.getElementById("tmm");
@@ -179,18 +195,17 @@ let state = {
   kombi_cmd: 0,
   klima_cmd: 0,
 
-  // Actuator feedback / online flags
+  // Actuator feedback / online flags (reported by MAIN)
   kombi_online: 0,
   klima_online: 0,
   kombi_act: -1,   // -1 unknown, 0 OFF, 1 ON
   klima_act: -1,
 
-  // fallback
-  kombi: 0, klima: 0,
-
-  tz_off_s: 0, ntp_ok: 0, ts: 0,
-  tmin: null, tmax: null, hmin: null, hmax: null
+  // main device online flag
+  main_online: null
 };
+
+let lastSeenMainMs = 0;
 
 let dirtySP=false, dirtyHys=false;
 let debounceT=null;
@@ -216,7 +231,7 @@ function clampInt(v, defVal){
   return Number.isFinite(n) ? n : defVal;
 }
 
-// Online-ON / Online-OFF / Offline + renkler
+/* ===================== RENDER HELPERS ===================== */
 function renderActStatus(online, act){
   const isOnline = !!online;
   if (!isOnline) return `<span class="st-offline">Offline</span>`;
@@ -226,8 +241,31 @@ function renderActStatus(online, act){
   return `${onlineSpan}-<span class="st-unk">?</span>`;
 }
 
+function renderMainStatus(v){
+  if (v === 1) return `<span class="st-online">Online</span>`;
+  if (v === 0) return `<span class="st-offline">Offline</span>`;
+  return `<span class="st-unk">--</span>`;
+}
+
+function isPending(online, act, cmd){
+  if (!online) return false;
+  if (act === -1) return true;
+  return (cmd !== act);
+}
+
+/* MAIN offline olursa aktüatörleri de “kullanılamaz” say */
+function markAllUnavailable(){
+  state.kombi_online = 0;
+  state.klima_online = 0;
+  state.kombi_act = -1;
+  state.klima_act = -1;
+}
+
 /* ===================== UI ===================== */
 function styleButtons(){
+  elMainDev.innerHTML = renderMainStatus(state.main_online);
+
+  // Mode button
   if (state.mode === "AUTO"){
     elModeBtn.className = "btn-green";
     elModeBtn.textContent = "AUTO";
@@ -240,6 +278,7 @@ function styleButtons(){
   }
   elModeTxt.textContent = state.mode || "--";
 
+  // Logic
   if (state.logic === "AC"){
     elLogicBtn.className = "btn-blue";
     elLogicBtn.textContent = "AC";
@@ -252,24 +291,61 @@ function styleButtons(){
   elKombiTxt.innerHTML = renderActStatus(state.kombi_online, state.kombi_act);
   elKlimaTxt.innerHTML = renderActStatus(state.klima_online, state.klima_act);
 
-  // MANUAL butonları cmd durumuna göre
   const manual = (state.mode === "MANUAL");
-  elKombiBtn.disabled = !manual;
-  elKlimaBtn.disabled = !manual;
+  const mainOnline = (state.main_online === 1);
+
+  const kOnline = mainOnline && !!state.kombi_online;
+  const lOnline = mainOnline && !!state.klima_online;
+
+  // only manual + online allows toggling
+  elKombiBtn.disabled = !manual || !kOnline;
+  elKlimaBtn.disabled = !manual || !lOnline;
 
   const kCmd = !!state.kombi_cmd;
   const lCmd = !!state.klima_cmd;
 
-  elKombiBtn.className = manual ? (kCmd ? "btn-green":"btn-gray") : "btn-gray";
-  elKlimaBtn.className = manual ? (lCmd ? "btn-green":"btn-gray") : "btn-gray";
+  const kPend = isPending(kOnline, state.kombi_act, state.kombi_cmd);
+  const lPend = isPending(lOnline, state.klima_act, state.klima_cmd);
 
-  elKombiBtn.textContent = manual ? (kCmd ? "KOMBI ON":"KOMBI OFF") : "KOMBI";
-  elKlimaBtn.textContent = manual ? (lCmd ? "KLIMA ON":"KLIMA OFF") : "KLIMA";
+  if (!manual){
+    elKombiBtn.className = "btn-gray";
+    elKlimaBtn.className = "btn-gray";
+    elKombiBtn.textContent = "KOMBI";
+    elKlimaBtn.textContent = "KLIMA";
+    return;
+  }
 
-  const tmm = (state.tmin==null || state.tmax==null) ? "--" : `${Number(state.tmin).toFixed(1)} / ${Number(state.tmax).toFixed(1)} °C`;
-  const hmm = (state.hmin==null || state.hmax==null) ? "--" : `${Number(state.hmin).toFixed(1)} / ${Number(state.hmax).toFixed(1)} %`;
-  elTmm.textContent = tmm;
-  elHmm.textContent = hmm;
+  // KOMBI button
+  if (!mainOnline){
+    elKombiBtn.className = "btn-red";
+    elKombiBtn.textContent = "ANA OFFLINE";
+  } else if (!kOnline){
+    elKombiBtn.className = "btn-red";
+    elKombiBtn.textContent = "KOMBI OFFLINE";
+  } else if (kPend){
+    elKombiBtn.className = "btn-blue";
+    elKombiBtn.textContent = (kCmd ? "KOMBI -> ON (Bekleniyor)" : "KOMBI -> OFF (Bekleniyor)");
+  } else {
+    const kAct = (state.kombi_act === 1);
+    elKombiBtn.className = kAct ? "btn-green" : "btn-gray";
+    elKombiBtn.textContent = kAct ? "KOMBI ON" : "KOMBI OFF";
+  }
+
+  // KLIMA button
+  if (!mainOnline){
+    elKlimaBtn.className = "btn-red";
+    elKlimaBtn.textContent = "ANA OFFLINE";
+  } else if (!lOnline){
+    elKlimaBtn.className = "btn-red";
+    elKlimaBtn.textContent = "KLIMA OFFLINE";
+  } else if (lPend){
+    elKlimaBtn.className = "btn-blue";
+    elKlimaBtn.textContent = (lCmd ? "KLIMA -> ON (Bekleniyor)" : "KLIMA -> OFF (Bekleniyor)");
+  } else {
+    const lAct = (state.klima_act === 1);
+    elKlimaBtn.className = lAct ? "btn-green" : "btn-gray";
+    elKlimaBtn.textContent = lAct ? "KLIMA ON" : "KLIMA OFF";
+  }
 }
 
 /* ===================== MQTT CMD ===================== */
@@ -311,13 +387,14 @@ elLogicBtn.addEventListener("click", ()=>{
   publishCmd({ logic: next });
 });
 
-// toggles cmd
 elKombiBtn.addEventListener("click", ()=>{
+  if (!(state.main_online === 1) || !state.kombi_online) return;
   const next = state.kombi_cmd ? "OFF" : "ON";
   publishCmd({ kombi: next });
 });
 
 elKlimaBtn.addEventListener("click", ()=>{
+  if (!(state.main_online === 1) || !state.klima_online) return;
   const next = state.klima_cmd ? "OFF" : "ON";
   publishCmd({ klima: next });
 });
@@ -354,6 +431,10 @@ function mqttStart(){
   client.on("offline", ()=>{
     elConn.textContent = "KAPALI";
     elConn.style.color = "#b00020";
+    state.main_online = null;
+    lastSeenMainMs = 0;
+    markAllUnavailable();
+    styleButtons();
   });
 
   client.on("error", (e)=>{
@@ -362,9 +443,24 @@ function mqttStart(){
 
   client.on("message", (topic, payload)=>{
     if (topic === T_LWT){
-      // LWT plain-text (online/offline). İstersen burada ayrıca gösterebilirsin.
+      const s = payload.toString().trim().toLowerCase();
+      if (s === "online") {
+        state.main_online = 1;
+        lastSeenMainMs = Date.now();
+      } else if (s === "offline") {
+        state.main_online = 0;
+        lastSeenMainMs = 0;
+        markAllUnavailable();
+      } else {
+        state.main_online = null;
+      }
+      styleButtons();
       return;
     }
+
+    // TELE/STATE => main canlı demektir (heartbeat)
+    lastSeenMainMs = Date.now();
+    if (state.main_online !== 1) state.main_online = 1;
 
     let j=null;
     try { j = JSON.parse(payload.toString()); } catch(e){ return; }
@@ -383,9 +479,6 @@ function mqttStart(){
       if (j.sp != null)  state.sp = Number(j.sp);
       if (j.hys != null) state.hys = Number(j.hys);
 
-      if (j.kombi != null) state.kombi = clampInt(j.kombi, state.kombi);
-      if (j.klima != null) state.klima = clampInt(j.klima, state.klima);
-
       if (j.kombi_cmd != null) state.kombi_cmd = clampInt(j.kombi_cmd, state.kombi_cmd);
       if (j.klima_cmd != null) state.klima_cmd = clampInt(j.klima_cmd, state.klima_cmd);
 
@@ -395,13 +488,14 @@ function mqttStart(){
       if (j.kombi_act != null) state.kombi_act = clampInt(j.kombi_act, state.kombi_act);
       if (j.klima_act != null) state.klima_act = clampInt(j.klima_act, state.klima_act);
 
-      state.tmin = (j.tmin==null ? null : Number(j.tmin));
-      state.tmax = (j.tmax==null ? null : Number(j.tmax));
-      state.hmin = (j.hmin==null ? null : Number(j.hmin));
-      state.hmax = (j.hmax==null ? null : Number(j.hmax));
+      if (!dirtySP && document.activeElement !== elSP) elSP.value = Number(j.sp ?? state.sp).toFixed(1);
+      if (!dirtyHys && document.activeElement !== elHys) elHys.value = Number(j.hys ?? state.hys).toFixed(1);
 
-      if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
-      if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+      // Minmax
+      const tmm = (j.tmin==null || j.tmax==null) ? "--" : `${Number(j.tmin).toFixed(1)} / ${Number(j.tmax).toFixed(1)} °C`;
+      const hmm = (j.hmin==null || j.hmax==null) ? "--" : `${Number(j.hmin).toFixed(1)} / ${Number(j.hmax).toFixed(1)} %`;
+      elTmm.textContent = tmm;
+      elHmm.textContent = hmm;
 
       styleButtons();
     }
@@ -412,9 +506,6 @@ function mqttStart(){
       if (j.sp != null)  state.sp = Number(j.sp);
       if (j.hys != null) state.hys = Number(j.hys);
 
-      if (j.kombi) state.kombi = (j.kombi === "ON") ? 1 : 0;
-      if (j.klima) state.klima = (j.klima === "ON") ? 1 : 0;
-
       if (j.kombi_cmd != null) state.kombi_cmd = clampInt(j.kombi_cmd, state.kombi_cmd);
       if (j.klima_cmd != null) state.klima_cmd = clampInt(j.klima_cmd, state.klima_cmd);
 
@@ -424,13 +515,14 @@ function mqttStart(){
       if (j.kombi_act != null) state.kombi_act = clampInt(j.kombi_act, state.kombi_act);
       if (j.klima_act != null) state.klima_act = clampInt(j.klima_act, state.klima_act);
 
-      state.tmin = (j.tmin==null ? null : Number(j.tmin));
-      state.tmax = (j.tmax==null ? null : Number(j.tmax));
-      state.hmin = (j.hmin==null ? null : Number(j.hmin));
-      state.hmax = (j.hmax==null ? null : Number(j.hmax));
-
       if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
       if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+
+      // Minmax
+      const tmm = (j.tmin==null || j.tmax==null) ? "--" : `${Number(j.tmin).toFixed(1)} / ${Number(j.tmax).toFixed(1)} °C`;
+      const hmm = (j.hmin==null || j.hmax==null) ? "--" : `${Number(j.hmin).toFixed(1)} / ${Number(j.hmax).toFixed(1)} %`;
+      elTmm.textContent = tmm;
+      elHmm.textContent = hmm;
 
       styleButtons();
     }
@@ -442,6 +534,19 @@ function mqttStop(){
   try { client.end(true); } catch(e) {}
   client = null;
 }
+
+/* ===================== MAIN TTL WATCHDOG ===================== */
+setInterval(()=>{
+  if (state.main_online === 1 && lastSeenMainMs > 0){
+    const dt = Date.now() - lastSeenMainMs;
+    if (dt > MAIN_TTL_MS){
+      state.main_online = 0;
+      lastSeenMainMs = 0;
+      markAllUnavailable();
+      styleButtons();
+    }
+  }
+}, 500);
 
 /* ===================== LOGIN FLOW ===================== */
 function showLogin(){
@@ -483,7 +588,6 @@ logoutBtn.addEventListener("click", ()=>{
   showLogin();
 });
 
-/* İlk açılış */
 if (localStorage.getItem("hvac_auth") === "1") showPanel();
 else showLogin();
 </script>

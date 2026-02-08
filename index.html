@@ -25,6 +25,21 @@
 
     .hidden { display:none !important; }
 
+    /* Groupbox */
+    .group {
+      border: 1px solid #b9b9b9;
+      border-radius: 12px;
+      background: #ededed;
+      padding: 10px 12px;
+      margin-top: 10px;
+    }
+    .groupTitle{
+      font-weight: 900;
+      margin: 0 0 6px 0;
+      color:#333;
+    }
+    .noteText{ color:#333; font-size: .95rem; line-height:1.35; }
+
     /* Login */
     .loginWrap { max-width: 420px; margin: 60px auto; }
     .loginCard { padding: 18px; border: 2px solid #6b8e23; border-radius: 12px; background:#e6e6e6; }
@@ -67,6 +82,7 @@
 <div id="panelView" class="wrap hidden">
   <div class="top">
 
+    <!-- MEASUREMENTS -->
     <div class="card">
       <div class="btnrow" style="justify-content:space-between;">
         <h2 style="margin:0;">📡 Ölçümler</h2>
@@ -86,37 +102,61 @@
       <div class="row"><div>Min/Max (H)</div><div class="val" id="hmm">--</div></div>
 
       <div class="muted" id="clock">Saat: --</div>
-      <div class="muted" id="lastSample">Son okuma: --</div>
+
+      <!-- "Son veri zamanı" sadece offline durumunda gösterilecek -->
+      <div class="muted hidden" id="lastSample">--</div>
+
+      <!-- NTP: OK yeşil / sorun kırmızı -->
       <div class="muted" id="ntp">NTP: --</div>
+
       <div class="muted" id="err" style="color:#8a5a00;"></div>
     </div>
 
+    <!-- CONTROL -->
     <div class="card">
       <h2>🎛️ Kontrol</h2>
-      <div class="row"><div>Mod</div><div class="val" id="modeTxt">--</div></div>
 
-      <div class="row"><div>Kombi</div><div class="val" id="kombiTxt">--</div></div>
-      <div class="row"><div>Klima</div><div class="val" id="klimaTxt">--</div></div>
+      <!-- Group: Status -->
+      <div class="group">
+        <div class="groupTitle">Durum</div>
+        <div class="row"><div>Mod</div><div class="val" id="modeTxt">--</div></div>
+        <div class="row"><div>Kombi</div><div class="val" id="kombiTxt">--</div></div>
+        <div class="row"><div>Klima</div><div class="val" id="klimaTxt">--</div></div>
+      </div>
 
-      <div class="row">
-        <div>Ayarlar</div>
-        <div class="btnrow">
-          <label>SP (°C) <input id="sp" type="number" step="0.1" min="10" max="35"/></label>
-          <label>Hys (°C) <input id="hys" type="number" step="0.1" min="0.5" max="3.0"/></label>
+      <!-- Group: Settings -->
+      <div class="group">
+        <div class="groupTitle">Ayarlar</div>
+        <div class="row">
+          <div></div>
+          <div class="btnrow">
+            <label>SP (°C) <input id="sp" type="number" step="0.1" min="10" max="35"/></label>
+            <label>Hys (°C) <input id="hys" type="number" step="0.1" min="0.5" max="3.0"/></label>
+          </div>
+        </div>
+        <div class="btnrow" style="margin-top:8px;">
           <button id="logicBtn" class="btn-blue">AC</button>
           <button id="saveBtn">Kaydet</button>
         </div>
       </div>
 
-      <div class="btnrow" style="margin-top:8px;">
-        <button id="modeBtn">AUTO</button>
-        <button id="kombiBtn">KOMBI</button>
-        <button id="klimaBtn">KLIMA</button>
+      <!-- Group: Actions -->
+      <div class="group">
+        <div class="groupTitle">Komut</div>
+        <div class="btnrow">
+          <button id="modeBtn">AUTO</button>
+          <button id="kombiBtn">KOMBI</button>
+          <button id="klimaBtn">KLIMA</button>
+        </div>
       </div>
 
-      <div class="muted" id="hint">
-        Not: MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.
-        <br/>Not2: OFFLINE durumda butonlar komut kabul etmez.
+      <!-- Group: Notes -->
+      <div class="group">
+        <div class="groupTitle">Not</div>
+        <div class="noteText" id="hint">
+          MANUAL modda Kombi/Klima ayrı ayrı açılır. AUTO modda logic’e göre sadece biri çalışır.<br/>
+          OFFLINE durumda butonlar komut kabul etmez.
+        </div>
       </div>
     </div>
 
@@ -135,15 +175,7 @@ const T_STATE = `${BASE_TOPIC}/state`;
 const T_CMD   = `${BASE_TOPIC}/cmd`;
 const T_LWT   = `${BASE_TOPIC}/lwt`;
 
-/*
-  Ana NodeMCU’nun fişi çekildiğinde broker’ın "offline" yazması
-  keepalive timeout ile olur. Daha hızlı ve deterministik olması için
-  panel ayrıca “heartbeat TTL” uygular:
-
-  - Ana NodeMCU’dan TELE/STATE gelmezse X ms sonra OFFLINE kabul eder.
-  - TELE/STATE periyodu 10s olduğundan TTL ~20s uygundur.
-*/
-const MAIN_TTL_MS = 2000;
+const MAIN_TTL_MS = 2000; // TTL = 2 sn
 
 /* “kapı” login (client-side) */
 const LOGIN_USER = "omer";
@@ -191,21 +223,21 @@ let state = {
   mode: null, logic: "AC",
   sp: 25.0, hys: 1.0,
 
-  // Commanded (panel -> main -> actuator cmd)
   kombi_cmd: 0,
   klima_cmd: 0,
 
-  // Actuator feedback / online flags (reported by MAIN)
   kombi_online: 0,
   klima_online: 0,
-  kombi_act: -1,   // -1 unknown, 0 OFF, 1 ON
+  kombi_act: -1,
   klima_act: -1,
 
-  // main device online flag
   main_online: null
 };
 
 let lastSeenMainMs = 0;
+let mqttConnected = false;
+
+let lastDataTimeStr = "--";
 
 let dirtySP=false, dirtyHys=false;
 let debounceT=null;
@@ -253,7 +285,6 @@ function isPending(online, act, cmd){
   return (cmd !== act);
 }
 
-/* MAIN offline olursa aktüatörleri de “kullanılamaz” say */
 function markAllUnavailable(){
   state.kombi_online = 0;
   state.klima_online = 0;
@@ -261,21 +292,32 @@ function markAllUnavailable(){
   state.klima_act = -1;
 }
 
+/* offline şartında son veri zamanını göster */
+function updateLastDataVisibility(){
+  const mainOk = (state.main_online === 1);
+  const needShow = (!mqttConnected) || (!mainOk);
+  if (needShow){
+    elLastSample.classList.remove("hidden");
+    elLastSample.innerHTML = `<span class="st-offline">Son veri: ${lastDataTimeStr}</span>`;
+  } else {
+    elLastSample.classList.add("hidden");
+  }
+}
+
+/* NTP renklendirme */
+function updateNtpStatus(ntp_ok){
+  if (ntp_ok === 1 || ntp_ok === true){
+    elNTP.innerHTML = `NTP: <span class="st-online">OK</span>`;
+  } else if (ntp_ok === 0 || ntp_ok === false){
+    elNTP.innerHTML = `NTP: <span class="st-offline">SORUN</span>`;
+  } else {
+    elNTP.innerHTML = `NTP: <span class="st-unk">--</span>`;
+  }
+}
+
 /* ===================== UI ===================== */
 function styleButtons(){
   elMainDev.innerHTML = renderMainStatus(state.main_online);
-
-  // Mode button
-  if (state.mode === "AUTO"){
-    elModeBtn.className = "btn-green";
-    elModeBtn.textContent = "AUTO";
-  } else if (state.mode === "MANUAL"){
-    elModeBtn.className = "btn-red";
-    elModeBtn.textContent = "MANUAL";
-  } else {
-    elModeBtn.className = "btn-gray";
-    elModeBtn.textContent = "AUTO";
-  }
   elModeTxt.textContent = state.mode || "--";
 
   // Logic
@@ -288,8 +330,8 @@ function styleButtons(){
   }
 
   // FEEDBACK status
-  elKombiTxt.innerHTML = renderActStatus(state.kombi_online, state.kombi_act);
-  elKlimaTxt.innerHTML = renderActStatus(state.klima_online, state.klima_act);
+  elKombiTxt.innerHTML = renderActStatus(state.kombi_online && state.main_online===1, state.kombi_act);
+  elKlimaTxt.innerHTML = renderActStatus(state.klima_online && state.main_online===1, state.klima_act);
 
   const manual = (state.mode === "MANUAL");
   const mainOnline = (state.main_online === 1);
@@ -297,9 +339,19 @@ function styleButtons(){
   const kOnline = mainOnline && !!state.kombi_online;
   const lOnline = mainOnline && !!state.klima_online;
 
-  // only manual + online allows toggling
   elKombiBtn.disabled = !manual || !kOnline;
   elKlimaBtn.disabled = !manual || !lOnline;
+
+  if (state.mode === "AUTO"){
+    elModeBtn.className = "btn-green";
+    elModeBtn.textContent = "AUTO";
+  } else if (state.mode === "MANUAL"){
+    elModeBtn.className = "btn-red";
+    elModeBtn.textContent = "MANUAL";
+  } else {
+    elModeBtn.className = "btn-gray";
+    elModeBtn.textContent = "AUTO";
+  }
 
   const kCmd = !!state.kombi_cmd;
   const lCmd = !!state.klima_cmd;
@@ -312,6 +364,7 @@ function styleButtons(){
     elKlimaBtn.className = "btn-gray";
     elKombiBtn.textContent = "KOMBI";
     elKlimaBtn.textContent = "KLIMA";
+    updateLastDataVisibility();
     return;
   }
 
@@ -346,6 +399,8 @@ function styleButtons(){
     elKlimaBtn.className = lAct ? "btn-green" : "btn-gray";
     elKlimaBtn.textContent = lAct ? "KLIMA ON" : "KLIMA OFF";
   }
+
+  updateLastDataVisibility();
 }
 
 /* ===================== MQTT CMD ===================== */
@@ -363,7 +418,7 @@ function scheduleAutoSave(){
     if (Number.isNaN(sp) || Number.isNaN(hys)) return;
     publishCmd({ sp, hys });
     dirtySP=false; dirtyHys=false;
-  }, 700);
+  }, 450);
 }
 
 elSP.addEventListener("input", ()=>{ dirtySP=true; scheduleAutoSave(); });
@@ -417,23 +472,32 @@ function mqttStart(){
   });
 
   client.on("connect", ()=>{
+    mqttConnected = true;
     elConn.textContent = "BAĞLANDI";
     elConn.style.color = "#0a7a2f";
     elErr.textContent = "";
     client.subscribe([T_TELE, T_STATE, T_LWT], {qos:0});
+    styleButtons();
   });
 
   client.on("reconnect", ()=>{
+    mqttConnected = false;
     elConn.textContent = "Bağlanıyor…";
     elConn.style.color = "#333";
+    styleButtons();
   });
 
   client.on("offline", ()=>{
-    elConn.textContent = "KAPALI";
+    mqttConnected = false;
+    elConn.textContent = "OFFLINE";
     elConn.style.color = "#b00020";
-    state.main_online = null;
-    lastSeenMainMs = 0;
-    markAllUnavailable();
+    styleButtons();
+  });
+
+  client.on("close", ()=>{
+    mqttConnected = false;
+    elConn.textContent = "OFFLINE";
+    elConn.style.color = "#b00020";
     styleButtons();
   });
 
@@ -458,74 +522,47 @@ function mqttStart(){
       return;
     }
 
-    // TELE/STATE => main canlı demektir (heartbeat)
     lastSeenMainMs = Date.now();
     if (state.main_online !== 1) state.main_online = 1;
 
     let j=null;
     try { j = JSON.parse(payload.toString()); } catch(e){ return; }
 
+    if (j.mode)  state.mode = j.mode;
+    if (j.logic) state.logic = j.logic;
+    if (j.sp != null)  state.sp = Number(j.sp);
+    if (j.hys != null) state.hys = Number(j.hys);
+
+    if (j.kombi_cmd != null) state.kombi_cmd = clampInt(j.kombi_cmd, state.kombi_cmd);
+    if (j.klima_cmd != null) state.klima_cmd = clampInt(j.klima_cmd, state.klima_cmd);
+
+    if (j.kombi_online != null) state.kombi_online = clampInt(j.kombi_online, state.kombi_online);
+    if (j.klima_online != null) state.klima_online = clampInt(j.klima_online, state.klima_online);
+
+    if (j.kombi_act != null) state.kombi_act = clampInt(j.kombi_act, state.kombi_act);
+    if (j.klima_act != null) state.klima_act = clampInt(j.klima_act, state.klima_act);
+
+    if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
+    if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
+
+    updateNtpStatus(j.ntp_ok);
+
+    if (j.ts && j.tz_off_s != null){
+      lastDataTimeStr = fmtTRT(Number(j.ts), Number(j.tz_off_s));
+    }
+
+    if (j.tmin==null || j.tmax==null) elTmm.textContent = "--";
+    else elTmm.textContent = `${Number(j.tmin).toFixed(1)} / ${Number(j.tmax).toFixed(1)} °C`;
+
+    if (j.hmin==null || j.hmax==null) elHmm.textContent = "--";
+    else elHmm.textContent = `${Number(j.hmin).toFixed(1)} / ${Number(j.hmax).toFixed(1)} %`;
+
     if (topic === T_TELE){
       elT.textContent = (j.t == null) ? "--" : (Number(j.t).toFixed(1) + " °C");
       elH.textContent = (j.h == null) ? "--" : (Number(j.h).toFixed(1) + " %");
-
-      if (j.ts && j.tz_off_s != null){
-        elLastSample.textContent = "Son okuma: " + fmtTRT(Number(j.ts), Number(j.tz_off_s));
-      }
-      elNTP.textContent = "NTP: " + (j.ntp_ok ? "OK" : "BEKLENİYOR");
-
-      if (j.mode)  state.mode = j.mode;
-      if (j.logic) state.logic = j.logic;
-      if (j.sp != null)  state.sp = Number(j.sp);
-      if (j.hys != null) state.hys = Number(j.hys);
-
-      if (j.kombi_cmd != null) state.kombi_cmd = clampInt(j.kombi_cmd, state.kombi_cmd);
-      if (j.klima_cmd != null) state.klima_cmd = clampInt(j.klima_cmd, state.klima_cmd);
-
-      if (j.kombi_online != null) state.kombi_online = clampInt(j.kombi_online, state.kombi_online);
-      if (j.klima_online != null) state.klima_online = clampInt(j.klima_online, state.klima_online);
-
-      if (j.kombi_act != null) state.kombi_act = clampInt(j.kombi_act, state.kombi_act);
-      if (j.klima_act != null) state.klima_act = clampInt(j.klima_act, state.klima_act);
-
-      if (!dirtySP && document.activeElement !== elSP) elSP.value = Number(j.sp ?? state.sp).toFixed(1);
-      if (!dirtyHys && document.activeElement !== elHys) elHys.value = Number(j.hys ?? state.hys).toFixed(1);
-
-      // Minmax
-      const tmm = (j.tmin==null || j.tmax==null) ? "--" : `${Number(j.tmin).toFixed(1)} / ${Number(j.tmax).toFixed(1)} °C`;
-      const hmm = (j.hmin==null || j.hmax==null) ? "--" : `${Number(j.hmin).toFixed(1)} / ${Number(j.hmax).toFixed(1)} %`;
-      elTmm.textContent = tmm;
-      elHmm.textContent = hmm;
-
-      styleButtons();
     }
 
-    if (topic === T_STATE){
-      if (j.mode)  state.mode = j.mode;
-      if (j.logic) state.logic = j.logic;
-      if (j.sp != null)  state.sp = Number(j.sp);
-      if (j.hys != null) state.hys = Number(j.hys);
-
-      if (j.kombi_cmd != null) state.kombi_cmd = clampInt(j.kombi_cmd, state.kombi_cmd);
-      if (j.klima_cmd != null) state.klima_cmd = clampInt(j.klima_cmd, state.klima_cmd);
-
-      if (j.kombi_online != null) state.kombi_online = clampInt(j.kombi_online, state.kombi_online);
-      if (j.klima_online != null) state.klima_online = clampInt(j.klima_online, state.klima_online);
-
-      if (j.kombi_act != null) state.kombi_act = clampInt(j.kombi_act, state.kombi_act);
-      if (j.klima_act != null) state.klima_act = clampInt(j.klima_act, state.klima_act);
-
-      if (!dirtySP && document.activeElement !== elSP) elSP.value = state.sp.toFixed(1);
-      if (!dirtyHys && document.activeElement !== elHys) elHys.value = state.hys.toFixed(1);
-
-      // Minmax
-      const tmm = (j.tmin==null || j.tmax==null) ? "--" : `${Number(j.tmin).toFixed(1)} / ${Number(j.tmax).toFixed(1)} °C`;
-      const hmm = (j.hmin==null || j.hmax==null) ? "--" : `${Number(j.hmin).toFixed(1)} / ${Number(j.hmax).toFixed(1)} %`;
-      elTmm.textContent = tmm;
-      elHmm.textContent = hmm;
-
-      styleButtons();
-    }
+    styleButtons();
   });
 }
 
@@ -533,6 +570,7 @@ function mqttStop(){
   if (!client) return;
   try { client.end(true); } catch(e) {}
   client = null;
+  mqttConnected = false;
 }
 
 /* ===================== MAIN TTL WATCHDOG ===================== */
@@ -546,7 +584,7 @@ setInterval(()=>{
       styleButtons();
     }
   }
-}, 500);
+}, 200);
 
 /* ===================== LOGIN FLOW ===================== */
 function showLogin(){

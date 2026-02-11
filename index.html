@@ -407,7 +407,7 @@ function styleButtons(){
 function publishCmd(obj){
   if (!client || !client.connected) return;
   obj.key = CMD_KEY;
-  client.publish(T_CMD, JSON.stringify(obj), {qos:0, retain:false});
+  client.publish(T_CMD, JSON.stringify(obj), {qos:0, retain:true});
 }
 
 function scheduleAutoSave(){
